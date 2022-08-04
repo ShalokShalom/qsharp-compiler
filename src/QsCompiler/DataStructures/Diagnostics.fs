@@ -397,7 +397,7 @@ type DiagnosticItem =
 
     static member private ApplyArguments (args: IEnumerable<string>) str =
         let args: obj [] =
-            if args = null then
+            if isNull args then
                 [||]
             else
                 [|
