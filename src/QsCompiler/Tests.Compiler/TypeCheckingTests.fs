@@ -1,40 +1,34 @@
-﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+﻿// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
 namespace Microsoft.Quantum.QsCompiler.Testing
 
-open System.Collections.Immutable
-open System.IO
 open Microsoft.Quantum.QsCompiler.Diagnostics
 open Microsoft.Quantum.QsCompiler.SyntaxExtensions
 open Microsoft.Quantum.QsCompiler.SyntaxTokens
 open Microsoft.Quantum.QsCompiler.SyntaxTree
+open System.Collections.Immutable
+open System.IO
 open Xunit
+
+open Microsoft.Quantum.QsCompiler.DataTypes
 
 /// Tests for type checking of Q# programs.
 module TypeCheckingTests =
-    let private compilation =
-        CompilerTests.Compile(
-            "TestCases",
-            [
-                Path.Combine("LinkingTests", "Core.qs")
-                "General.qs"
-                "TypeChecking.qs"
-                "Types.qs"
-            ]
-        )
+    let private files =
+        [
+            Path.Combine("LinkingTests", "Core.qs")
+            "General.qs"
+            "TypeChecking.qs"
+            "Types.qs"
+        ]
 
-    /// The compiled type-checking tests.
-    let private tests = CompilerTests compilation
-
+    let private compilation = TestUtils.buildFiles "TestCases" files [] None TestUtils.Library
+    let private diagnostics = Diagnostics.byDeclaration compilation
     let private ns = "Microsoft.Quantum.Testing.TypeChecking"
 
-    /// <summary>
-    /// Asserts that the declaration with the given <paramref name="name"/> has the given
-    /// <paramref name="diagnostics"/>.
-    /// </summary>
-    let internal expect name diagnostics =
-        tests.VerifyDiagnostics(QsQualifiedName.New(ns, name), diagnostics)
+    let internal expect name expected =
+        Diagnostics.assertMatches (Seq.map (fun e -> e, None) expected) diagnostics[QsQualifiedName.New(ns, name)]
 
     let private allValid name count =
         for i = 1 to count do
@@ -129,6 +123,19 @@ module TypeCheckingTests =
         expect "LambdaInvalid7" [ Error ErrorCode.LocalVariableAlreadyExists ]
         expect "LambdaInvalid8" [ Error ErrorCode.UnknownItemName ]
         expect "LambdaInvalid9" [ Error ErrorCode.UnknownItemName ]
+
+        Diagnostics.assertMatches
+            [
+                Error ErrorCode.InvalidAdjointApplication,
+                Range.Create (Position.Create 1 30) (Position.Create 1 32) |> Some
+            ]
+            diagnostics[QsQualifiedName.New(ns, "LambdaInvalid10")]
+
+        Diagnostics.assertMatches
+            [
+                Error ErrorCode.TypeMismatch, Range.Create (Position.Create 2 10) (Position.Create 2 17) |> Some
+            ]
+            diagnostics[QsQualifiedName.New(ns, "LambdaInvalid11")]
 
     [<Fact>]
     let ``Operation lambda with non-unit return (1)`` () =
