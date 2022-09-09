@@ -188,8 +188,10 @@ type ErrorCode =
     | RequiredUnitReturnForAdjoint = 6015
     | RequiredUnitReturnForControlled = 6016
     | RequiredUnitReturnForControlledAdjoint = 6017
-    | AliasForNamespaceAlreadyExists = 6018
-    | AliasForOpenedNamespace = 6019
+    // TODO: Remove AliasForNamespaceAlreadyExists since we no longer emit it
+    | [<Obsolete "This diagnostic is no longer in use.">] AliasForNamespaceAlreadyExists = 6018
+    // TODO: Remove AliasForOpenedNamespace since we no longer emit it
+    | [<Obsolete "This diagnostic is no longer in use.">] AliasForOpenedNamespace = 6019
     /// I.e., the chosen alias already exists.
     | InvalidNamespaceAliasName = 6020
     | ConflictInReferences = 6021
@@ -334,8 +336,10 @@ type WarningCode =
     | UnsupportedCallableCapability = 5027
     | UnsupportedClassicalCapability = 5028
 
-    | NamespaceAleadyOpen = 6003
-    | NamespaceAliasIsAlreadyDefined = 6004
+    // TODO: Remove NamespaceAleadyOpen since we no longer emit it
+    | [<Obsolete "This diagnostic is no longer in use.">] NamespaceAleadyOpen = 6003
+    // TODO: Remove NamespaceAliasIsAlreadyDefined since we no longer emit it
+    | [<Obsolete "This diagnostic is no longer in use.">] NamespaceAliasIsAlreadyDefined = 6004
     | MissingBodyDeclaration = 6005
     | UnusedTypeParam = 6006
     | DuplicateAttribute = 6201
@@ -711,14 +715,13 @@ type DiagnosticItem =
 
             | ErrorCode.ArrayBaseTypeMismatch -> "The array item type {0} does not match the expected type {1}."
             | ErrorCode.AmbiguousTypeParameterResolution ->
-                let note =
-                    if Seq.item 1 args |> String.IsNullOrWhiteSpace then
-                        ""
-                    else
-                        Environment.NewLine + "Note: Relevant unsolved constraints: {1}"
-
-                "The type parameter {0} is ambiguous. More type annotations or usage context may be necessary."
-                + note
+                [
+                    "The type parameter {0} is ambiguous."
+                    "For more information, see: https://docs.microsoft.com/azure/quantum/user-guide/language/typesystem/typeinference"
+                    if Seq.item 1 args |> String.IsNullOrWhiteSpace |> not then
+                        "Note: Relevant unsolved constraints: {1}"
+                ]
+                |> String.concat Environment.NewLine
             | ErrorCode.GlobalTypeAlreadyExists -> "A type with the name \"{0}\" already exists."
             | ErrorCode.GlobalCallableAlreadyExists -> "A callable with the name \"{0}\" already exists."
             | ErrorCode.LocalVariableAlreadyExists -> "A variable with the name \"{0}\" already exists."
