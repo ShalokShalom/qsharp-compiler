@@ -32,25 +32,25 @@ namespace Microsoft.Quantum.QsCompiler.QIR
             /// Maps variable names to the corresponding value.
             /// Mutable variables are represented as PointerValues.
             /// </summary>
-            private readonly Dictionary<string, IValue> variables = new Dictionary<string, IValue>();
+            private readonly Dictionary<string, IValue> variables = new();
 
             /// <summary>
             /// Contains all values whose reference count has been increased.
             /// The first items contains the value, and the second item indicates whether to recursively reference inner items.
             /// </summary>
-            private readonly List<(IValue, bool)> pendingReferences = new List<(IValue, bool)>();
+            private readonly List<(IValue, bool)> pendingReferences = new();
 
             /// <summary>
             /// Contains all values that require unreferencing upon closing the scope.
             /// The first items contains the value, and the second item indicates whether to recursively unreference inner items.
             /// </summary>
-            private readonly List<(IValue, bool)> requiredUnreferences = new List<(IValue, bool)>();
+            private readonly List<(IValue, bool)> requiredUnreferences = new();
 
             /// <summary>
             /// Contains the values that require invoking a release function upon closing the scope,
             /// as well as the name of the release function to invoke.
             /// </summary>
-            private readonly List<Action> requiredReleases = new List<Action>();
+            private readonly List<Action> requiredReleases = new();
 
             public Scope(Action<Func<ITypeRef, string?>, (IValue, bool)[]> increaseCounts, Action<Func<ITypeRef, string?>, (IValue, bool)[]> decreaseCounts)
             {
@@ -99,9 +99,9 @@ namespace Microsoft.Quantum.QsCompiler.QIR
 
                     if (value is TupleValue tuple)
                     {
-                        for (var i = 0; i < tuple.StructType.Members.Count && recurIntoInnerItems; ++i)
+                        for (var i = 0; i < tuple.LlvmElementTypes.Count && recurIntoInnerItems; ++i)
                         {
-                            var itemFuncName = getFunctionName(tuple.StructType.Members[i]);
+                            var itemFuncName = getFunctionName(tuple.LlvmElementTypes[i]);
                             if (itemFuncName != null)
                             {
                                 var item = tuple.GetTupleElement(i);
@@ -367,7 +367,7 @@ namespace Microsoft.Quantum.QsCompiler.QIR
         /// New variables and values are always added to the scope on top of the stack.
         /// When looking for a name, the stack is searched top-down.
         /// </summary>
-        private readonly Stack<Scope> scopes = new Stack<Scope>();
+        private readonly Stack<Scope> scopes = new();
 
         /// <summary>
         /// Is true when there are currently no stack frames tracked.
@@ -407,6 +407,8 @@ namespace Microsoft.Quantum.QsCompiler.QIR
                 }
                 else if (Types.IsCallable(t))
                 {
+                    // We need to alias count callables to ensure that
+                    // the alias counts for captured value are accurate.
                     return RuntimeLibrary.CallableUpdateAliasCount;
                 }
             }
@@ -452,6 +454,9 @@ namespace Microsoft.Quantum.QsCompiler.QIR
             return null;
         }
 
+        private static bool IsStackAlloctedContainer(ITypeRef t) =>
+            t.Kind == TypeKind.Array || t.Kind == TypeKind.Struct || t.Kind == TypeKind.Vector;
+
         /// <summary>
         /// For each value for which the given function returns a function name,
         /// applies the runtime function with that name to the value, casting the value if necessary.
@@ -472,7 +477,7 @@ namespace Microsoft.Quantum.QsCompiler.QIR
         /// </summary>
         private void ModifyCounts(Func<ITypeRef, string?> getFunctionName, Value change, IValue value, bool recurIntoInnerItems)
         {
-            void ProcessValue(string funcName, IValue value)
+            void ProcessValue(string? funcName, IValue value)
             {
                 if (value is PointerValue pointer)
                 {
@@ -480,32 +485,32 @@ namespace Microsoft.Quantum.QsCompiler.QIR
                 }
                 else
                 {
-                    Value arg;
+                    Func<Value> getArg;
                     if (value is TupleValue tuple)
                     {
-                        for (var i = 0; i < tuple.StructType.Members.Count && recurIntoInnerItems; ++i)
+                        for (var i = 0; recurIntoInnerItems && i < tuple.LlvmElementTypes.Count; ++i)
                         {
-                            var itemFuncName = getFunctionName(tuple.StructType.Members[i]);
-                            if (itemFuncName != null)
+                            var itemFuncName = getFunctionName(tuple.LlvmElementTypes[i]);
+                            if (itemFuncName != null || IsStackAlloctedContainer(tuple.LlvmElementTypes[i]))
                             {
                                 var item = tuple.GetTupleElement(i);
                                 ProcessValue(itemFuncName, item);
                             }
                         }
 
-                        arg = tuple.OpaquePointer;
+                        getArg = () => tuple.OpaquePointer;
                     }
                     else if (value is ArrayValue array)
                     {
                         var itemFuncName = getFunctionName(array.LlvmElementType);
-                        if (itemFuncName != null && recurIntoInnerItems)
+                        if (recurIntoInnerItems && (itemFuncName != null || IsStackAlloctedContainer(array.LlvmElementType)))
                         {
                             this.sharedState.IterateThroughArray(array, arrItem => ProcessValue(itemFuncName, arrItem));
                         }
 
-                        arg = array.OpaquePointer;
+                        getArg = () => array.OpaquePointer;
                     }
-                    else if (value is CallableValue callable && recurIntoInnerItems)
+                    else if (recurIntoInnerItems && value is CallableValue callable)
                     {
                         var captureCountChange =
                             funcName == RuntimeLibrary.CallableUpdateReferenceCount ? RuntimeLibrary.CaptureUpdateReferenceCount :
@@ -514,20 +519,23 @@ namespace Microsoft.Quantum.QsCompiler.QIR
 
                         var invokeMemoryManagment = this.sharedState.GetOrCreateRuntimeFunction(captureCountChange);
                         this.sharedState.CurrentBuilder.Call(invokeMemoryManagment, callable.Value, change);
-                        arg = callable.Value;
+                        getArg = () => callable.Value;
                     }
                     else
                     {
-                        arg = value.Value;
+                        getArg = () => value.Value;
                     }
 
-                    var func = this.sharedState.GetOrCreateRuntimeFunction(funcName);
-                    this.sharedState.CurrentBuilder.Call(func, arg, change);
+                    if (funcName is not null)
+                    {
+                        var func = this.sharedState.GetOrCreateRuntimeFunction(funcName);
+                        this.sharedState.CurrentBuilder.Call(func, getArg(), change);
+                    }
                 }
             }
 
             var func = getFunctionName(value.LlvmType);
-            if (func != null)
+            if (func != null || IsStackAlloctedContainer(value.LlvmType))
             {
                 ProcessValue(func, value);
             }
@@ -754,7 +762,7 @@ namespace Microsoft.Quantum.QsCompiler.QIR
         {
             IValue? value = null;
             this.scopes.FirstOrDefault(scope => scope.TryGetVariable(name, out value));
-            return value != null ? value : throw new KeyNotFoundException($"Could not find a Value for local symbol {name}");
+            return value ?? throw new KeyNotFoundException($"Could not find a Value for local symbol {name}");
         }
 
         /// <summary>
