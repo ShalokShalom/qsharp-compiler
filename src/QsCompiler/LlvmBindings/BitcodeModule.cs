@@ -253,6 +253,16 @@ namespace LlvmBindings
             return LoadFrom(buffer, context);
         }
 
+        /// <summary>Load a bit-code module from raw bit-code.</summary>
+        /// <param name="bitcode">Raw bit-code from which the module is loaded.</param>
+        /// <param name="context">Context to use for creating the module.</param>
+        /// <returns>Loaded <see cref="BitcodeModule"/>.</returns>
+        public static BitcodeModule LoadFrom(byte[] bitcode, Context context)
+        {
+            var buffer = new MemoryBuffer(bitcode);
+            return LoadFrom(buffer, context);
+        }
+
         /// <summary>Load bit code from a memory buffer.</summary>
         /// <param name="buffer">Buffer to load from.</param>
         /// <param name="context">Context to load the module into.</param>
@@ -624,6 +634,31 @@ namespace LlvmBindings
         {
             this.ThrowIfDisposed();
             return FromHandle(this.moduleHandle.Clone())!;
+        }
+
+        private static unsafe bool TryParseBitcode(Context context, LLVMMemoryBufferRef handle, out LLVMModuleRef outModule, out string outMessage)
+        {
+            fixed (LLVMModuleRef* pOutModule = &outModule)
+            {
+                sbyte* pMessage = null;
+                var result = LLVM.ParseBitcodeInContext(
+                    context.ContextHandle,
+                    handle,
+                    (LLVMOpaqueModule**)pOutModule,
+                    &pMessage);
+
+                if (pMessage == null)
+                {
+                    outMessage = string.Empty;
+                }
+                else
+                {
+                    var span = new ReadOnlySpan<byte>(pMessage, int.MaxValue);
+                    outMessage = span.Slice(0, span.IndexOf((byte)'\0')).AsString();
+                }
+
+                return result == 0;
+            }
         }
 
         internal static BitcodeModule FromHandle(LLVMModuleRef nativeHandle)
